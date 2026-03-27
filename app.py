@@ -3,6 +3,11 @@ import requests
 import pandas as pd
 import os
 import time
+import sys
+sys.path.insert(0, r"D:\FASHION")
+
+# Import the agent optimizer
+from agent_optimizer import run_optimization
 
 # --- UI CONFIGURATION ---
 st.set_page_config(page_title="Zintoo AI", layout="wide", page_icon="🛍️")
@@ -34,6 +39,16 @@ st.markdown("""
         border-radius: 10px;
         font-weight: bold;
         text-transform: uppercase;
+    }
+    .alert-critical { color: #d32f2f; font-weight: bold; }
+    .alert-high { color: #f57c00; font-weight: bold; }
+    .alert-medium { color: #fbc02d; font-weight: bold; }
+    .order-box {
+        border-left: 4px solid #1976d2;
+        padding: 12px;
+        margin: 8px 0;
+        background-color: #f5f5f5;
+        border-radius: 4px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -113,24 +128,107 @@ else:  # ADMIN VIEW
         st.line_chart(plot_df.set_index('date')[['demand']])
         st.info(f"AI insight: Demand for Light Apparel is up {int((mult-1)*100)}% due to {weather}.")
 
-    with admin_menu[1]: # Agentic Inventory
-        st.header("Autonomous Reallocation")
-        if st.button("⚡ Run Agentic Optimization"):
-            with st.status("Agent Reasoning...", expanded=True):
-                st.write("Checking Pincode 560001 stock levels...")
-                time.sleep(0.5)
-                st.write("⚠️ Low Stock Alert: 'White Kurta' (Only 3 units remaining)")
-                st.write(f"🧠 Reasoning: 60-min SLA failure risk high. Transferring 12 units from Central Hub.")
-                st.toast("Internal Reallocation Order #Z-402 Issued to Godown", icon="🚚")
-            st.success("Inventory Balanced!")
-
-        st.subheader("Autonomous Dispatch Log")
-        st.table(pd.DataFrame({
-            "Time": ["10:00", "10:15"],
-            "Action": ["Stock Audit", "Reallocation"],
-            "Target": ["W1 (North)", "W3 (Central)"],
-            "Status": ["Complete", "In-Transit"]
-        }))
+    with admin_menu[1]: # Agentic Inventory Optimization (INTEGRATED)
+        st.header("⚡ Autonomous Inventory Reallocation")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            selected_pincode = st.selectbox(
+                "Select Pincode for Optimization",
+                [560001, 560037, 560064],
+                format_func=lambda x: f"{x} - Bangalore"
+            )
+        with col2:
+            run_agent = st.button("🚀 Run Agent", use_container_width=True)
+        
+        st.divider()
+        
+        if run_agent:
+            with st.status("🧠 Agent Reasoning...", expanded=True) as status_container:
+                try:
+                    # Run the LangGraph agent
+                    result = run_optimization(
+                        pincode=selected_pincode,
+                        demand_csv=r"D:\FASHION\data\demand_forecast.csv",
+                        inventory_csv=r"D:\FASHION\data\warehouse_inventory.csv",
+                    )
+                    
+                    st.write(f"📍 Pincode: {result['pincode']}")
+                    st.write(f"📊 Products Analyzed: {result['summary']['products_analyzed']}")
+                    st.write(f"⚠️  Alerts Generated: {result['summary']['alerts_raised']}")
+                    st.write(f"📦 Reallocation Orders: {result['summary']['orders_created']}")
+                    
+                    status_container.update(label="✅ Agent Complete", state="complete")
+                    
+                except Exception as e:
+                    st.error(f"Agent Error: {str(e)}")
+                    st.write("Make sure agent_optimizer.py is in D:\\FASHION\\")
+                    status_container.update(label="❌ Agent Failed", state="error")
+                    result = None
+        else:
+            result = None
+        
+        st.divider()
+        
+        # Display results if available
+        if result:
+            # ALERTS SECTION
+            if result['alerts']:
+                st.subheader(f"⚠️  Critical Alerts ({len(result['alerts'])})")
+                alert_cols = st.columns(3)
+                
+                critical_count = len([a for a in result['alerts'] if a['risk_level'] == 'critical'])
+                high_count = len([a for a in result['alerts'] if a['risk_level'] == 'high'])
+                medium_count = len([a for a in result['alerts'] if a['risk_level'] == 'medium'])
+                
+                alert_cols[0].metric("🔴 Critical", critical_count)
+                alert_cols[1].metric("🟠 High", high_count)
+                alert_cols[2].metric("🟡 Medium", medium_count)
+                
+                st.markdown("**Top Alerts:**")
+                for alert in result['alerts'][:5]:
+                    risk_class = f"alert-{alert['risk_level']}"
+                    st.markdown(
+                        f"<div class='{risk_class}'>● {alert['product_name']} ({alert['risk_level'].upper()})</div>",
+                        unsafe_allow_html=True
+                    )
+                    st.caption(f"   Stock: {alert['current_stock']} units | Days Remaining: {alert['days_of_stock']:.1f}")
+            
+            st.divider()
+            
+            # REALLOCATION ORDERS SECTION
+            if result['reallocation_orders']:
+                st.subheader(f"📦 Reallocation Orders ({len(result['reallocation_orders'])})")
+                
+                for order in result['reallocation_orders'][:5]:
+                    with st.container(border=True):
+                        col1, col2, col3 = st.columns([1, 2, 1])
+                        
+                        with col1:
+                            st.metric("Order ID", order['order_id'])
+                        with col2:
+                            st.write(f"**{order['product_name']}**")
+                            st.caption(f"{order['source_warehouse']} → {order['destination_warehouse']}")
+                        with col3:
+                            st.metric("Qty", order['quantity'])
+                        
+                        st.caption(f"Priority: {order['priority'].upper()} | {order['reason']}")
+                
+                # Export option
+                st.divider()
+                orders_df = pd.DataFrame(result['reallocation_orders'])
+                csv = orders_df.to_csv(index=False)
+                st.download_button(
+                    "📥 Download Orders CSV",
+                    csv,
+                    "zintoo_reallocation_orders.csv",
+                    "text/csv"
+                )
+            else:
+                st.info("✅ No reallocation orders needed - inventory is optimized!")
+        
+        else:
+            st.info("👆 Click 'Run Agent' to analyze warehouse inventory and generate reallocation orders.")
 
     with admin_menu[2]: # System Health
         st.header("Project Evaluation Metrics")
@@ -143,5 +241,6 @@ else:  # ADMIN VIEW
         **Architecture Highlights:**
         - **Model:** CLIP-ViT (Multimodal)
         - **Vector Engine:** FAISS (7,000 SKUs)
-        - **Agent:** Deterministic NRL Logic
+        - **Agent:** LangGraph (Multi-step inventory reasoning)
+        - **Optimization:** Demand forecasting + Risk detection + Reallocation planning
         """)
