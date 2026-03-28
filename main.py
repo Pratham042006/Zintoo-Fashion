@@ -61,7 +61,7 @@ def get_image_embedding(image_bytes):
 # --- API ENDPOINTS ---
 
 @app.get("/search")
-def search(query: str, top_k: int = 9):
+def search(query: str, top_k: int = 50):
     emb = get_text_embedding(query)
     # FAISS returns distances and indices
     distances, indices = index.search(emb.astype('float32'), top_k)

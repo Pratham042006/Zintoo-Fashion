@@ -189,8 +189,9 @@ def render_product_card(item, index):
                 if st.button(f"🛍️ Add to Cart", key=f"buy_{img_id}_{index}", use_container_width=True):
                     st.toast(f"✅ Added to cart (SKU-{img_id})", icon="🎉")
             with col_action2:
-                if st.button("❤️ Save", key=f"save_{img_id}_{index}", use_container_width=True):
-                    st.toast("Saved to your favorites!", icon="⭐")
+                if st.button(f"🔍 Show Similar", key=f"sim_{img_id}_{index}", use_container_width=True):
+                    st.session_state.search_query = item.get('productDisplayName', '')
+                    st.rerun()
 
 def render_alert_box(alert, risk_level):
     badge_class = f"badge badge-{risk_level}"
@@ -234,29 +235,70 @@ if persona == "👥 Customer":
     st.markdown("# ✨ Your Personal Stylist")
     st.markdown("Find your perfect style with AI-powered recommendations")
     st.markdown("---")
+    
+    # 1. Check if we have a request from a "Show Similar" click
+    auto_query = st.session_state.get('auto_query', "")
 
-    col_search, col_btn = st.columns([4, 1])
-    with col_search:
-        query = st.text_input("What are you looking for?", placeholder="e.g., white linen shirt, summer dress...", label_visibility="collapsed")
-    with col_btn:
-        search_clicked = st.button("🔍 Search", use_container_width=True)
+    # --- SEARCH INPUT SECTION ---
+    col_text, col_img = st.columns([2, 2])
+    
+    with col_text:
+        st.markdown("#### 💬 Search by Description")
+        # Use the auto_query as the default value if it exists
+        query = st.text_input("What are you looking for?", value=auto_query, placeholder="e.g., white linen shirt, summer dress...", label_visibility="collapsed")
+    
+    with col_img:
+        st.markdown("#### 📸 Search by Image")
+        uploaded_file = st.file_uploader("Upload a photo to find similar styles", type=['jpg', 'jpeg', 'png'], label_visibility="collapsed")
 
-    if search_clicked and query:
+    search_clicked = st.button("🔍 Find My Style", use_container_width=True)
+
+    # 2. TRIGGER LOGIC: Run if button is clicked OR if we have an auto_query pending
+    if (search_clicked or auto_query) and (query or uploaded_file):
+        # Clear the auto_query immediately so it doesn't loop on next manual interaction
+        if 'auto_query' in st.session_state:
+            del st.session_state['auto_query']
+            
+        results = []
         try:
-            with st.status("🔍 Searching styles...", expanded=False) as status:
-                r = requests.get(f"http://localhost:8000/search?query={query}")
-                results = r.json()["results"]
-                status.update(label="✅ Found items", state="complete")
-
+            # Case 1: Image Search
+            if uploaded_file is not None:
+                with st.status("📸 Analyzing visual features...", expanded=False) as status:
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+                    r = requests.post("http://localhost:8000/search_image", files=files)
+                    results = r.json()["results"]
+                    status.update(label="✅ Found visual matches", state="complete")
+            
+            # Case 2: Text Search (Includes "Show Similar" queries)
+            elif query:
+                with st.status("🔍 Finding items...", expanded=False) as status:
+                    r = requests.get(f"http://localhost:8000/search?query={query}")
+                    results = r.json()["results"]
+                    
+                    # Validation for gibberish
+                    THRESHOLD = 0.22
+                    if results and results[0]['similarity_score'] < THRESHOLD:
+                        st.error(f"❌ **Invalid Search**: '{query}'")
+                        results = []
+                    status.update(label="✅ Search complete", state="complete")
+            
+            # --- DISPLAY RESULTS ---
             if results:
-                st.markdown(f"### Found {len(results)} items matching '{query}'")
+                col_title, col_sort = st.columns([3, 1])
+                with col_title:
+                    st.markdown(f"### Results for '{query}'" if query else "### Visual Matches")
+                with col_sort:
+                    st.selectbox("Sort By", ["Relevance", "Price: Low to High", "New Arrivals"], label_visibility="collapsed")
+                
+                st.divider()
                 for i, item in enumerate(results):
                     render_product_card(item, i)
-            else:
-                st.info("No items found. Try a different search term!")
-        except:
-            st.error("Unable to connect to search service. Please try again later.")
-
+            elif query or uploaded_file:
+                 st.info("No items found. Try a different search term or image!")
+                
+        except Exception as e:
+            st.error(f"Connection Error: Ensure main.py is running on port 8000. ({e})")
+            
 else:
     # ============ WAREHOUSE ADMIN VIEW ============
     st.markdown("# 🏭 Zintoo Operations")
