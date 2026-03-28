@@ -5,13 +5,13 @@ import os
 import time
 import sys
 from datetime import datetime
-from weather_api import WeatherAPI  # Ensure this matches your file name
+from weather_api import CulturalContextAPI  # Ensure this matches your file name
 
 # Ensure local modules are discoverable
 sys.path.insert(0, r"D:\FASHION")
 
 from agent_optimizer import run_optimization
-from weather_api import WeatherAPI
+
 
 # --- PAGE CONFIG ---
 st.set_page_config(
@@ -262,11 +262,11 @@ else:
     st.markdown("# 🏭 Zintoo Operations")
     
     # GLOBAL SELECTORS: Move these ABOVE the tabs so they apply to everything
-    col_w, col_e, col_p = st.columns(3)
+    col_w, col_f, col_p = st.columns(3)
     with col_w:
         weather = st.selectbox("Current Weather", ["Sunny ☀️", "Rainy 🌧️", "Heatwave 🌡️"])
-    with col_e:
-        event = st.toggle("Include High-Demand Event", False)
+    with col_f:
+        festival = st.selectbox("Indian Festival Context", ["None", "Holi 🎨", "Diwali 🪔", "Eid 🌙", "Wedding Season 💍"])
     with col_p:
         selected_pincode = st.selectbox("Select Pincode", [560001, 560037, 560064])
 
@@ -289,8 +289,8 @@ else:
             plot_df = plot_df.sort_values('date')
 
             # 4. Apply Multiplier logic
-            w_ctx = WeatherAPI.get_weather_context(weather)
-            mult = w_ctx['multiplier'] * (1.6 if event else 1.0)
+            ctx_data = CulturalContextAPI.get_context(weather, festival)
+            mult = ctx_data['weather_multiplier'] * ctx_data['festival_multiplier']
             
             # Apply to forecast rows only
             plot_df.loc[plot_df['is_forecast'] == True, 'demand'] *= mult
@@ -320,7 +320,8 @@ else:
                     pincode=selected_pincode,
                     demand_csv=r"D:\FASHION\data\demand_forecast.csv",
                     inventory_csv=r"D:\FASHION\data\warehouse_inventory.csv",
-                    weather_label=weather
+                    weather_label=weather,
+                    event_label=festival
                 )
                 st.write(f"✅ Analyzed {result['summary']['products_analyzed']} items")
                 status.update(label="✅ Optimization Complete", state="complete")

@@ -15,7 +15,7 @@ from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 import operator
 
-from weather_api import WeatherAPI
+from weather_api import CulturalContextAPI
 
 # --- DATA MODELS ---
 
@@ -64,8 +64,12 @@ def get_pincode_products(df_demand: pd.DataFrame, pincode: int) -> list:
     matched_products = df_demand[df_demand['pincode'] == target_pincode]['id'].unique()
     return matched_products.tolist()
 
-def analyze_product_demand(df_demand: pd.DataFrame, product_id: int, pincode: int, weather_label: str = "Sunny ☀️") -> dict:
-    """Analyze demand trends for a product in a pincode"""
+def analyze_product_demand(df_demand: pd.DataFrame, product_id: int, pincode: int, weather_label: str = "Sunny ☀️", event_label: str = "None") -> dict:
+    """
+    Analyze demand trends for a product with integrated Weather & Indian Festival logic.
+    Applies targeted multipliers based on product category matching.
+    """
+    # 1. Filter data for specific Product + Pincode
     product_data = df_demand[
         (df_demand['id'] == product_id) & 
         (df_demand['pincode'] == pincode)
@@ -74,27 +78,50 @@ def analyze_product_demand(df_demand: pd.DataFrame, product_id: int, pincode: in
     if len(product_data) == 0:
         return None
     
-    # Split into historical and forecast
+    # 2. Split into Historical and Forecast segments
     forecast_data = product_data[product_data['is_forecast'] == True]
     historical_data = product_data[product_data['is_forecast'] == False]
     
-# Apply the Weather Multiplier
-    weather_ctx = WeatherAPI.get_weather_context(weather_label)
-    multiplier = weather_ctx['multiplier']
+    # 3. Fetch Cultural and Weather Context
+    # Note: Import inside function if not done at top to avoid circular imports
+    from weather_api import CulturalContextAPI
+    ctx = CulturalContextAPI.get_context(weather_label, event_label)
     
-    # Calculate daily demand with weather impact
-    forecasted_demand = float(forecast_data['demand'].mean()) * multiplier
-    peak_demand = float(forecast_data['demand'].max()) * multiplier
+    # 4. Calculate Final Multiplier
+    # Base weather impact (applies to all products)
+    weather_mult = ctx['weather_multiplier']
+    
+    # Targeted Festival impact (applies only to relevant SKUs)
+    festival_mult = 1.0
+    product_name = product_data.iloc[0]['name']
+    
+    if ctx['target_categories']:
+        # Check if product name matches any target category (e.g., "White" for Holi)
+        if any(cat.lower() in product_name.lower() for cat in ctx['target_categories']):
+            festival_mult = ctx['festival_multiplier']
+    
+    # Combine multipliers (e.g., Rain + Holi surge)
+    final_multiplier = weather_mult * festival_mult
+    
+    # 5. Calculate daily demand with contextual impact
+    # We apply the multiplier to the mean and max (peak) forecast values
+    forecasted_demand = float(forecast_data['demand'].mean()) * final_multiplier
+    peak_demand = float(forecast_data['demand'].max()) * final_multiplier
     
     return {
         'product_id': product_id,
-        'product_name': product_data.iloc[0]['name'],
+        'product_name': product_name,
         'pincode': pincode,
+        'avg_historical_demand': float(historical_data['demand'].mean()),
         'forecasted_demand': forecasted_demand,
         'peak_forecast_demand': peak_demand,
-        'weather_factor': weather_label
+        'context': {
+            'weather': weather_label,
+            'festival': event_label,
+            'total_multiplier': round(final_multiplier, 2),
+            'is_targeted_sku': festival_mult > 1.0
+        }
     }
-
 def check_inventory_levels(df_inventory: pd.DataFrame, product_id: int, pincode: int) -> dict:
     """Get current inventory across all warehouses for a product"""
     # Map pincode to warehouse logic (simplified)
@@ -215,6 +242,7 @@ def node_analyze_next_product(state: OptimizationState) -> OptimizationState:
     products = state['products_to_check']
     # NEW: Pull weather from the state
     current_weather = state.get('weather_label', "Sunny ☀️")
+    current_festival = state.get('event_label', "None")
     
     analysis_log = []
     for p_id in products:
@@ -225,7 +253,8 @@ def node_analyze_next_product(state: OptimizationState) -> OptimizationState:
             state['demand_data'], 
             product_id, 
             pincode, 
-            weather_label=current_weather
+            weather_label=current_weather,
+            event_label=current_festival
         )
         inventory_status = check_inventory_levels(state['inventory_data'], product_id, pincode)
         
@@ -238,7 +267,11 @@ def node_analyze_next_product(state: OptimizationState) -> OptimizationState:
             }
             analysis_log.append(log_entry)
     
-    return {**state, "analysis_log": analysis_log}
+    return {
+        **state,
+        "analysis_log": analysis_log,
+        "status": f"Analysis complete for {len(analysis_log)} products."
+    }
     
     # CRITICAL: Return the ENTIRE list back to the state
     return {
@@ -330,7 +363,7 @@ def build_optimization_graph(df_demand: pd.DataFrame, df_inventory: pd.DataFrame
     
     return workflow.compile()
 
-def run_optimization(pincode, demand_csv, inventory_csv, weather_label="Sunny ☀️"):
+def run_optimization(pincode, demand_csv, inventory_csv, weather_label="Sunny ☀️", event_label="None"):
     """Execute the optimization agent"""
     # Load data
     df_demand, df_inventory = load_data(demand_csv, inventory_csv)
@@ -342,6 +375,7 @@ def run_optimization(pincode, demand_csv, inventory_csv, weather_label="Sunny �
     initial_state = OptimizationState(
         pincode=pincode,
         weather_label=weather_label,
+        event_label=event_label,
         products_to_check=[],
         current_product_idx=0,
         demand_data=df_demand,
