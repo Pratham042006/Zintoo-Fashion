@@ -211,22 +211,25 @@ def node_initialize(state: OptimizationState) -> OptimizationState:
     return state
 
 def node_analyze_next_product(state: OptimizationState) -> OptimizationState:
-    """Analyze all products for the pincode in one pass to ensure state persistence"""
     pincode = state['pincode']
     products = state['products_to_check']
+    # NEW: Pull weather from the state
+    current_weather = state.get('weather_label', "Sunny ☀️")
     
-    # Initialize a fresh log if this is the first run
     analysis_log = []
-    
     for p_id in products:
         product_id = int(p_id)
         
-        # 1. Get demand & inventory
-        demand_analysis = analyze_product_demand(state['demand_data'], product_id, pincode)
+        # FIX: Pass the weather_label here!
+        demand_analysis = analyze_product_demand(
+            state['demand_data'], 
+            product_id, 
+            pincode, 
+            weather_label=current_weather
+        )
         inventory_status = check_inventory_levels(state['inventory_data'], product_id, pincode)
         
         if demand_analysis:
-            # 2. Build the entry
             log_entry = {
                 'product_id': product_id,
                 'product_name': demand_analysis['product_name'],
@@ -234,6 +237,8 @@ def node_analyze_next_product(state: OptimizationState) -> OptimizationState:
                 'inventory_status': inventory_status,
             }
             analysis_log.append(log_entry)
+    
+    return {**state, "analysis_log": analysis_log}
     
     # CRITICAL: Return the ENTIRE list back to the state
     return {
