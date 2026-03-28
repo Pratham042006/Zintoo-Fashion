@@ -15,6 +15,8 @@ from langgraph.graph import StateGraph, START, END
 from typing import TypedDict, Annotated
 import operator
 
+from weather_api import WeatherAPI
+
 # --- DATA MODELS ---
 
 @dataclass
@@ -62,7 +64,7 @@ def get_pincode_products(df_demand: pd.DataFrame, pincode: int) -> list:
     matched_products = df_demand[df_demand['pincode'] == target_pincode]['id'].unique()
     return matched_products.tolist()
 
-def analyze_product_demand(df_demand: pd.DataFrame, product_id: int, pincode: int) -> dict:
+def analyze_product_demand(df_demand: pd.DataFrame, product_id: int, pincode: int, weather_label: str = "Sunny ☀️") -> dict:
     """Analyze demand trends for a product in a pincode"""
     product_data = df_demand[
         (df_demand['id'] == product_id) & 
@@ -76,16 +78,22 @@ def analyze_product_demand(df_demand: pd.DataFrame, product_id: int, pincode: in
     forecast_data = product_data[product_data['is_forecast'] == True]
     historical_data = product_data[product_data['is_forecast'] == False]
     
-    analysis = {
+# Apply the Weather Multiplier
+    weather_ctx = WeatherAPI.get_weather_context(weather_label)
+    multiplier = weather_ctx['multiplier']
+    
+    # Calculate daily demand with weather impact
+    forecasted_demand = float(forecast_data['demand'].mean()) * multiplier
+    peak_demand = float(forecast_data['demand'].max()) * multiplier
+    
+    return {
         'product_id': product_id,
         'product_name': product_data.iloc[0]['name'],
         'pincode': pincode,
-        'avg_historical_demand': float(historical_data['demand'].mean()),
-        'forecasted_demand': float(forecast_data['demand'].mean()) if len(forecast_data) > 0 else 0,
-        'demand_trend': 'increasing' if len(forecast_data) > 0 and forecast_data['demand'].mean() > historical_data['demand'].mean() else 'stable',
-        'peak_forecast_demand': float(forecast_data['demand'].max()) if len(forecast_data) > 0 else 0,
+        'forecasted_demand': forecasted_demand,
+        'peak_forecast_demand': peak_demand,
+        'weather_factor': weather_label
     }
-    return analysis
 
 def check_inventory_levels(df_inventory: pd.DataFrame, product_id: int, pincode: int) -> dict:
     """Get current inventory across all warehouses for a product"""
@@ -317,7 +325,7 @@ def build_optimization_graph(df_demand: pd.DataFrame, df_inventory: pd.DataFrame
     
     return workflow.compile()
 
-def run_optimization(pincode: int, demand_csv: str, inventory_csv: str) -> dict:
+def run_optimization(pincode, demand_csv, inventory_csv, weather_label="Sunny ☀️"):
     """Execute the optimization agent"""
     # Load data
     df_demand, df_inventory = load_data(demand_csv, inventory_csv)
@@ -328,6 +336,7 @@ def run_optimization(pincode: int, demand_csv: str, inventory_csv: str) -> dict:
     # Initial state
     initial_state = OptimizationState(
         pincode=pincode,
+        weather_label=weather_label,
         products_to_check=[],
         current_product_idx=0,
         demand_data=df_demand,

@@ -9,16 +9,36 @@ df_products = pd.read_csv(r"D:\FASHION\data\products.csv")
 data = []
 pincodes = [560001, 560037, 560064] # Bangalore pincodes
 
-for _, product in df_products.head(10).iterrows(): # Just do top 10 for the demo
+# Focus on the top 10 products for the demo to keep the UI snappy
+for _, product in df_products.head(10).iterrows(): 
     for pc in pincodes:
-        base_demand = np.random.randint(5, 20)
-        for i in range(-30, 8): # 30 days past, 7 days future
-            date = (datetime.now() + timedelta(days=i)).strftime('%Y-%m-%d')
-            # Add some randomness and a "trend" for the future
-            demand = max(0, base_demand + np.random.randint(-3, 5))
+        # Base daily demand for this specific product/pincode
+        base_demand = np.random.randint(5, 15) 
+        
+        # 30 days past (-30 to 0) + 7 days future (1 to 7)
+        for i in range(-30, 8): 
+            # Force daily granularity by adding exactly 'i' days
+            date_obj = datetime.now() + timedelta(days=i)
+            date_str = date_obj.strftime('%Y-%m-%d')
+            
+            # Logic: If it's a forecast (i > 0), add a slight "upward trend" 
+            # to make the Agent's reallocation orders more likely to trigger
+            trend = np.random.randint(2, 6) if i > 0 else np.random.randint(-2, 3)
+            demand = max(1, base_demand + trend) 
+            
             is_forecast = i > 0
-            data.append([product['id'], product['productDisplayName'], pc, date, demand, is_forecast])
+            
+            data.append([
+                int(product['id']), 
+                product['productDisplayName'], 
+                pc, 
+                date_str, 
+                demand, 
+                is_forecast
+            ])
 
 df_forecast = pd.DataFrame(data, columns=['id', 'name', 'pincode', 'date', 'demand', 'is_forecast'])
+
+# Final Step: Save to the data folder
 df_forecast.to_csv(r"D:\FASHION\data\demand_forecast.csv", index=False)
-print("Demand Forecast data generated!")
+print(f"Success: Daily Demand Forecast generated for {len(df_forecast)} rows.")
