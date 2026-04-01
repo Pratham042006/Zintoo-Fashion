@@ -177,21 +177,23 @@ def render_confidence_badge(score):
 def render_product_card(item, index):
     img_id = int(item['id'])
     with st.container(border=True):
-        col1, col2 = st.columns([1.2, 1.8])
-        with col1:
-            st.image(f"http://localhost:8000/images/{img_id}.jpg", use_container_width=True)
-        with col2:
-            st.markdown(f"<span class='stock-tag'>✓ In Stock — Express Delivery (60m)</span>", unsafe_allow_html=True)
-            st.markdown(f"<h3 style='margin: 1rem 0 0.5rem 0;'>{item.get('productDisplayName', 'Fashion Item')}</h3>", unsafe_allow_html=True)
-            st.caption(f"SKU: {img_id}")
-            col_action1, col_action2 = st.columns(2)
-            with col_action1:
-                if st.button(f"🛍️ Add to Cart", key=f"buy_{img_id}_{index}", use_container_width=True):
-                    st.toast(f"✅ Added to cart (SKU-{img_id})", icon="🎉")
-            with col_action2:
-                if st.button(f"🔍 Show Similar", key=f"sim_{img_id}_{index}", use_container_width=True):
-                    st.session_state.search_query = item.get('productDisplayName', '')
-                    st.rerun()
+        # 1. Product Image on top
+        st.image(f"http://localhost:8000/images/{img_id}.jpg", use_container_width=True)
+        
+        # 2. Status Badge & Title
+        st.markdown(f"<h3 style='font-size: 1.1rem; margin: 0.5rem 0; height: 2.8rem; overflow: hidden;'>{item.get('productDisplayName', 'Fashion Item')}</h3>", unsafe_allow_html=True)
+        st.caption(f"SKU: {img_id}")
+        
+        # 3. Action Buttons in a small grid
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button(f"🛍️ Add", key=f"buy_{img_id}_{index}", use_container_width=True):
+                st.toast(f"Added SKU-{img_id}", icon="✅")
+        with c2:
+            if st.button(f"🔍 Similar", key=f"sim_{img_id}_{index}", use_container_width=True):
+                # Triggering the auto-search logic via session state
+                st.session_state['auto_query'] = item.get('productDisplayName', '')
+                st.rerun()
 
 def render_alert_box(alert, risk_level):
     badge_class = f"badge badge-{risk_level}"
@@ -236,44 +238,36 @@ if persona == "👥 Customer":
     st.markdown("Find your perfect style with AI-powered recommendations")
     st.markdown("---")
     
-    # 1. Check if we have a request from a "Show Similar" click
-    auto_query = st.session_state.get('auto_query', "")
+    # Check if we have an incoming "Show Similar" request
+    auto_query = st.session_state.pop('auto_query', "")
 
     # --- SEARCH INPUT SECTION ---
     col_text, col_img = st.columns([2, 2])
-    
     with col_text:
         st.markdown("#### 💬 Search by Description")
-        # Use the auto_query as the default value if it exists
-        query = st.text_input("What are you looking for?", value=auto_query, placeholder="e.g., white linen shirt, summer dress...", label_visibility="collapsed")
+        # Pre-fill with auto_query if it exists
+        query = st.text_input("What are you looking for?", value=auto_query, placeholder="e.g., white linen shirt...", label_visibility="collapsed")
     
     with col_img:
         st.markdown("#### 📸 Search by Image")
-        uploaded_file = st.file_uploader("Upload a photo to find similar styles", type=['jpg', 'jpeg', 'png'], label_visibility="collapsed")
+        uploaded_file = st.file_uploader("Upload a photo", type=['jpg', 'jpeg', 'png'], label_visibility="collapsed")
 
     search_clicked = st.button("🔍 Find My Style", use_container_width=True)
 
-    # 2. TRIGGER LOGIC: Run if button is clicked OR if we have an auto_query pending
+    # TRIGGER: Run if button clicked OR if we just popped an auto_query
     if (search_clicked or auto_query) and (query or uploaded_file):
-        # Clear the auto_query immediately so it doesn't loop on next manual interaction
-        if 'auto_query' in st.session_state:
-            del st.session_state['auto_query']
-            
         results = []
         try:
-            # Case 1: Image Search
             if uploaded_file is not None:
                 with st.status("📸 Analyzing visual features...", expanded=False) as status:
                     files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
                     r = requests.post("http://localhost:8000/search_image", files=files)
-                    results = r.json()["results"]
+                    results = r.json().get("results", [])
                     status.update(label="✅ Found visual matches", state="complete")
-            
-            # Case 2: Text Search (Includes "Show Similar" queries)
             elif query:
                 with st.status("🔍 Finding items...", expanded=False) as status:
                     r = requests.get(f"http://localhost:8000/search?query={query}")
-                    results = r.json()["results"]
+                    results = r.json().get("results", [])
                     
                     # Validation for gibberish
                     THRESHOLD = 0.22
@@ -281,24 +275,34 @@ if persona == "👥 Customer":
                         st.error(f"❌ **Invalid Search**: '{query}'")
                         results = []
                     status.update(label="✅ Search complete", state="complete")
-            
-            # --- DISPLAY RESULTS ---
-            if results:
-                col_title, col_sort = st.columns([3, 1])
-                with col_title:
-                    st.markdown(f"### Results for '{query}'" if query else "### Visual Matches")
-                with col_sort:
-                    st.selectbox("Sort By", ["Relevance", "Price: Low to High", "New Arrivals"], label_visibility="collapsed")
+
+            # --- RENDER RESULTS IN GRID ---
+                if results:
+                # NEW: Header with Sort Dropdown
+                    col_title, col_sort = st.columns([3, 1])
+                    with col_title:
+                        st.markdown(f"### Results for '{query}'" if query else "### Visual Matches")
+                    with col_sort:
+                    # Visual placeholder for sorting
+                        st.selectbox(
+                            "Sort By", 
+                            ["Relevance", "Price: Low to High", "Price: High to Low", "New Arrivals"], 
+                            label_visibility="collapsed",
+                            key="customer_sort_ui"
+                        )
                 
-                st.divider()
-                for i, item in enumerate(results):
-                    render_product_card(item, i)
-            elif query or uploaded_file:
-                 st.info("No items found. Try a different search term or image!")
+                    st.divider()
+                    cols_per_row = 3
+                    for i in range(0, len(results), cols_per_row):
+                        cols = st.columns(cols_per_row)
+                        chunk = results[i : i + cols_per_row]
+                        for j, item in enumerate(chunk):
+                            with cols[j]:
+                                render_product_card(item, i + j)
                 
         except Exception as e:
-            st.error(f"Connection Error: Ensure main.py is running on port 8000. ({e})")
-            
+            st.error(f"Backend Error: Ensure main.py is running. ({e})")
+
 else:
     # ============ WAREHOUSE ADMIN VIEW ============
     st.markdown("# 🏭 Zintoo Operations")
@@ -368,6 +372,21 @@ else:
                 st.write(f"✅ Analyzed {result['summary']['products_analyzed']} items")
                 status.update(label="✅ Optimization Complete", state="complete")
             
+            # NEW: Download CSV Feature
+            if result['reallocation_orders']:
+                export_df = pd.DataFrame(result['reallocation_orders'])
+                csv_data = export_df.to_csv(index=False).encode('utf-8')
+                
+                st.download_button(
+                    label="📥 Download Reallocation Schedule (CSV)",
+                    data=csv_data,
+                    file_name=f"reallocation_{selected_pincode}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            st.divider() # Visual separation before alerts
+
             # Display results
             if result['alerts']:
                 st.markdown("### 🚨 Critical Alerts")
